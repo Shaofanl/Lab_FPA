@@ -1,5 +1,6 @@
 import cPickle
 import numpy as np
+from sklearn.cluster import KMeans
 import sys
 import os
 
@@ -8,50 +9,77 @@ from sklearn import svm
 from sklearn.preprocessing import label_binarize
 from sklearn.multiclass import OneVsRestClassifier
 
-def train_test_split(x, y, tag):
-    X_train, X_test, y_train, y_test = [], [], [], []
 
+def bagOfWord(x, K):
+    all_x = np.concatenate(x.tolist())
+    all_x = all_x.reshape(all_x.shape[0], -1)
+    # normalization
+    all_x = np.array(all_x, dtype=float)/all_x.sum(1).reshape(all_x.shape[0], 1)
+    print('Original shape:', all_x.shape)
+    print('Clustering into %d categories ...'%K)
+
+    est = KMeans(n_clusters=K)
+    est.fit(all_x)
+
+    return est
+
+def calcHistogram(codebook, x, K):
+    all_x = np.concatenate(x)
+    all_x = all_x.reshape(all_x.shape[0], -1)
+    # normalize
+    all_x = np.array(all_x, dtype=float)/all_x.sum(1).reshape(all_x.shape[0], 1)
+    labels = codebook.predict(all_x) 
+
+    new_x = np.zeros((len(x), K))
+    acc = 0
+    for ind, video in enumerate(x):
+        length = video.shape[0]
+        new_x[ind] = np.bincount(labels[acc:acc+length], minlength=K)
+        acc += length
+
+    print 'New shape:', new_x.shape
+    return new_x
+
+def train_test_split(local_x, global_x, y, tag):
     train = set(np.random.choice(range(1, 13), size=(6,), replace=False))
     test = set(range(1, 13)) - train
+    train_index = [x for x in range(len(local_x)) if tag[x] in train] 
+    test_index = [x for x in range(len(local_x)) if tag[x] in test] 
+    print train
+    print test
+    print train_index
+    print test_index
 
-    for ind, ele in enumerate(tag):
-        if int(ele.split('_')[0]) in train:
-        #if np.random.randint(0, 2) == 1:
-            X_train.append(x[ind])
-            y_train.append(y[ind])
-        else:
-            X_test.append(x[ind])
-            y_test.append(y[ind])
+    K = 300
+    local_codebook = bagOfWord(local_x[list(train_index)], K)
+    local_x = calcHistogram(local_codebook, local_x, K)
 
-    X_train =  np.array(X_train)
-    X_test = np.array(X_test)
-    y_train = np.array(y_train)
-    y_test = np.array(y_test)
-    #print 'train:', train, 'test:', test,
-    #print 'set size: ', map(lambda x: x.shape, [X_train, X_test, y_train, y_test]),
+    global_codebook = bagOfWord(global_x[list(train_index)], K)
+    global_x = calcHistogram(global_codebook, global_x, K)
+
+    x = np.concatenate([local_x, global_x], 1)
+    print 'Final x.shape: ', x.shape
+
+    X_train = x[train_index] 
+    X_test = x[test_index] 
+    y_train = y[train_index] 
+    y_test = y[test_index] 
     return X_train, X_test, y_train, y_test 
 
     
 from kernels import chi_square_kernel, histogram_intersection_kernel, zero_kernel, multichannel_wrapper
 
 if __name__ == '__main__':
-    bowFilename = 'lab4/bow.pkl'
+    # bowFilename = 'lab4/bow.pkl'
+    alignedFeaturesFilename = 'lab4/alignedFeaturesRaw.pkl'
 
-    if not os.path.exists(bowFilename):
-        raise IOError("No such file '%s'."%bowFilename)
-
-    x, y, tag = cPickle.load(open(bowFilename, 'rb'))
-
-    x = np.array(x, dtype=float)
-    y = np.array(y, dtype=int)-1
-    
+    local_x, global_x, y, tag = cPickle.load(open(alignedFeaturesFilename, 'rb'))
 
     y = label_binarize(y, classes=range(7))
     n_classes = 7
-    X_train, X_test, y_train, y_test = train_test_split(x, y, tag)
 
     print("Training SVM")
-    TIMES = 10
+    TIMES = 100
     l = []
     for i in range(TIMES):
         print '\rFitting %d/%d ' % (i, TIMES),
@@ -59,7 +87,7 @@ if __name__ == '__main__':
 
         # resampling
         classifier = OneVsRestClassifier(svm.SVC(kernel=multichannel_wrapper(2, chi_square_kernel), probability=True))
-        X_train, X_test, y_train, y_test = train_test_split(x, y, tag)
+        X_train, X_test, y_train, y_test = train_test_split(local_x, global_x, y, tag)
         y_score = classifier.fit(X_train, y_train).decision_function(X_test)
 
         l.append(float((y_test.argmax(1) == y_score.argmax(1)).sum())/y_score.shape[0]*100)

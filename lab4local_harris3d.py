@@ -1,12 +1,12 @@
 # use harris3d
 
-import cv2
+#import cv2
 import os
 import numpy as np
 import cPickle
 import sys
 
-MAX_DES = 1000
+MAX_DES = 500
 
 if __name__ == '__main__':
     harris3d_dir = './tools/stip-2.0-linux'
